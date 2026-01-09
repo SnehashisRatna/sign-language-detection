@@ -1,0 +1,15 @@
+# Virtual environment
+venv/
+__pycache__/
+
+# Data folders
+data/
+dataset_videos/
+
+# Model files
+*.pth
+*.npz
+
+# OS files
+.DS_Store
+Thumbs.db
