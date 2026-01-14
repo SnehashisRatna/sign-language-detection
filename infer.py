@@ -14,17 +14,35 @@ from scripts.utils import extract_holistic_landmarks, FEAT_SIZE_HOLISTIC
 # CONFIG
 # -------------------------
 MODEL_PATH = "gru_sanity_model.pth"
-CLASSES = ["HELLO", "SORRY", "THANKYOU"]
+
+# ⚠️ IMPORTANT: MUST MATCH TRAINING ORDER
+CLASSES = [
+    "AFTER", "ATTENTION", "BABY", "BEST", "BROTHER", "CHILD", "DAY",
+    "DAYAFTER", "DAYAFTERTOMORROW", "DEAF", "DEGREE", "DELAY",
+    "DO", "DONT", "DRINK", "family", "FATHER", "FOOD", "FRIEND",
+    "HELLO", "HUNGER", "HUSBAND", "LATER", "MAN", "MILK", "MORE",
+    "MOTHER", "NO", "NOW", "Numbers", "PLAY", "PLEASE", "PLENTY",
+    "REGRET", "RICE", "ROTI", "SEND", "SISTER", "SORRY", "THANKYOU",
+    "THERE", "THEY", "THIS", "THURSDAY", "TOMORROW", "WAIT",
+    "WAHTEVER", "WALK", "WAKE", "WASTE", "WATER", "WAY", "WE",
+    "WHAT", "WHERE", "WHICH", "WHILE", "WHO", "WHY", "WIDE",
+    "WIFE", "WOMAN", "YEAR", "YES", "YESTERDAY"
+]
+
+
 SEQ_LEN = 30
 CONF_THRESH = 0.6
 DEVICE = "cpu"
 
+PRED_EVERY_N_FRAMES = 3   # reduce lag
+VOTE_WINDOW = 5           # stabilize output
+
 # -------------------------
-# LOAD MODEL (MUST MATCH TRAINING)
+# LOAD MODEL
 # -------------------------
 model = GRUClassifier(
     input_size=1662,
-    hidden_size=128,     # ⚠️ MUST MATCH TRAINING
+    hidden_size=128,       # MUST MATCH TRAINING
     num_classes=len(CLASSES)
 ).to(DEVICE)
 
@@ -40,17 +58,16 @@ def realtime_inference():
     mp_holistic = mp.solutions.holistic
 
     cap = cv2.VideoCapture(0)
-
     if not cap.isOpened():
         print("❌ ERROR: Camera not accessible")
         return
 
     print("📷 Camera opened successfully")
-
     cv2.namedWindow("Sign Language Inference", cv2.WINDOW_NORMAL)
 
     frame_buffer = deque(maxlen=SEQ_LEN)
-    pred_history = deque(maxlen=10)
+    pred_history = deque(maxlen=VOTE_WINDOW)
+    frame_count = 0
 
     with mp_holistic.Holistic(
         static_image_mode=False,
@@ -65,19 +82,26 @@ def realtime_inference():
                 print("❌ Failed to read frame")
                 break
 
+            frame_count += 1
             frame = cv2.flip(frame, 1)
+
+            # MediaPipe processing
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = holistic.process(rgb)
 
+            # Extract landmarks
             landmarks = extract_holistic_landmarks(results)
 
             if landmarks.shape[0] == FEAT_SIZE_HOLISTIC:
                 frame_buffer.append(landmarks)
 
-            prediction = "Collecting..."
+            prediction = "Warming up..."
             confidence = 0.0
 
-            if len(frame_buffer) == SEQ_LEN:
+            # -------------------------
+            # SLIDING WINDOW PREDICTION
+            # -------------------------
+            if len(frame_buffer) == SEQ_LEN and frame_count % PRED_EVERY_N_FRAMES == 0:
                 seq = np.array(frame_buffer)
                 x = torch.tensor(seq, dtype=torch.float32).unsqueeze(0)
 
@@ -92,21 +116,24 @@ def realtime_inference():
                     if confidence >= CONF_THRESH:
                         pred_history.append(label)
 
-                    if len(pred_history) > 0:
-                        prediction = Counter(pred_history).most_common(1)[0][0]
-                    else:
-                        prediction = "Uncertain"
+            # -------------------------
+            # STABILIZED OUTPUT
+            # -------------------------
+            if len(pred_history) > 0:
+                prediction = Counter(pred_history).most_common(1)[0][0]
 
             # -------------------------
             # DISPLAY
             # -------------------------
+            cv2.rectangle(frame, (0, 0), (640, 130), (0, 0, 0), -1)
+
             cv2.putText(frame, f"Prediction: {prediction}", (10, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
             cv2.putText(frame, f"Confidence: {confidence:.2f}", (10, 80),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
 
-            cv2.putText(frame, "Press Q to quit", (10, 120),
+            cv2.putText(frame, "Press Q to quit", (10, 115),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
             cv2.imshow("Sign Language Inference", frame)
@@ -121,12 +148,4 @@ def realtime_inference():
 # MAIN
 # -------------------------
 if __name__ == "__main__":
-    print("Choose mode:")
-    print("2 → Real-time webcam inference")
-
-    choice = input("Enter choice (2): ")
-
-    if choice == "2":
-        realtime_inference()
-    else:
-        print("Invalid choice")
+    realtime_inference()

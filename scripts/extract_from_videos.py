@@ -1,7 +1,8 @@
 """
-extract_from_videos.py (MediaPipe Holistic)
+extract_from_videos.py (MediaPipe Holistic + Temporal Augmentation)
 
-Convert videos organized by label into .npz sequences (one .npz per video).
+Convert videos organized by label into multiple .npz sequences
+using temporal sliding-window augmentation.
 """
 
 import os
@@ -14,8 +15,32 @@ import argparse
 from utils import extract_holistic_landmarks, save_sequence, FEAT_SIZE_HOLISTIC
 
 
-def process_video_file(video_path, seq_len, holistic):
-    """Return (seq_len, 1662) array extracted from video."""
+# -------------------------
+# TEMPORAL AUGMENTATION
+# -------------------------
+def temporal_augmentation(frames, seq_len=30, step=2, max_seqs=4):
+    """
+    frames: list of (1662,) arrays
+    returns: list of (30, 1662) sequences
+    """
+    sequences = []
+    total_frames = len(frames)
+
+    for start in range(0, total_frames - seq_len + 1, step):
+        end = start + seq_len
+        seq = frames[start:end]
+
+        if len(seq) == seq_len:
+            sequences.append(np.stack(seq))
+
+        if len(sequences) == max_seqs:
+            break
+
+    return sequences
+
+
+def process_video_file(video_path, holistic):
+    """Return list of landmark frames extracted from video."""
     cap = cv2.VideoCapture(video_path)
     frames = []
 
@@ -30,25 +55,16 @@ def process_video_file(video_path, seq_len, holistic):
 
         lm = extract_holistic_landmarks(res)
 
-        # Safety check
         if lm.shape[0] != FEAT_SIZE_HOLISTIC:
-            raise ValueError(f"Feature size mismatch: {lm.shape[0]} != {FEAT_SIZE_HOLISTIC}")
+            raise ValueError(
+                f"Feature size mismatch: {lm.shape[0]} != {FEAT_SIZE_HOLISTIC}"
+            )
 
         frames.append(lm)
 
     cap.release()
 
-    if len(frames) == 0:
-        return None
-
-    # Trim / pad
-    if len(frames) >= seq_len:
-        frames = frames[:seq_len]
-    else:
-        last = frames[-1]
-        frames.extend([last] * (seq_len - len(frames)))
-
-    return np.stack(frames)
+    return frames if len(frames) > 0 else None
 
 
 def main(dataset_dir, save_dir, seq_len, ext_list,
@@ -72,7 +88,6 @@ def main(dataset_dir, save_dir, seq_len, ext_list,
             if not os.path.isdir(label_dir):
                 continue
 
-            # Normalize label name
             label = label.upper()
 
             files = []
@@ -86,26 +101,35 @@ def main(dataset_dir, save_dir, seq_len, ext_list,
 
             print(f"[INFO] Processing '{label}' ({len(files)} videos)")
 
-            # Count existing sequences safely
             label_save_dir = os.path.join(save_dir, label)
             os.makedirs(label_save_dir, exist_ok=True)
             start_idx = len(os.listdir(label_save_dir))
 
-            for idx, fpath in enumerate(files):
+            for vid_idx, fpath in enumerate(files):
                 print(f"  -> {os.path.basename(fpath)}")
 
                 try:
-                    seq = process_video_file(fpath, seq_len, holistic)
-                    if seq is None:
+                    frames = process_video_file(fpath, holistic)
+                    if frames is None:
                         print("     [SKIP] Empty video")
                         continue
 
-                    save_path = save_sequence(
-                        save_dir, label, start_idx + idx, seq
+                    sequences = temporal_augmentation(
+                        frames,
+                        seq_len=seq_len,
+                        step=2,
+                        max_seqs=4
                     )
 
-                    total += 1
-                    print(f"     Saved: {save_path}")
+                    for seq_i, seq in enumerate(sequences):
+                        save_path = save_sequence(
+                            save_dir,
+                            label,
+                            f"{start_idx}_{vid_idx}_{seq_i}",
+                            seq
+                        )
+                        total += 1
+                        print(f"     Saved: {save_path}")
 
                 except Exception as e:
                     print(f"     [ERROR] {e}")

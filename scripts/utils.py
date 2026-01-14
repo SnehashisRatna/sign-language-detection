@@ -168,3 +168,27 @@ def save_sequence(save_dir, label, seq_idx, frames):
     path = os.path.join(label_dir, f"{label}_{seq_idx}.npz")
     np.savez_compressed(path, frames=frames, label=label)
     return path
+
+# ---------------------------------
+# Class Loader (AUTO-GENERATE CLASSES)
+# ---------------------------------
+
+def get_classes_from_data(data_dir):
+    """
+    Automatically read class names from dataset folder structure.
+
+    Example:
+        data/
+          ├── HELLO/
+          ├── THANKYOU/
+          ├── YES/
+
+    Returns:
+        Sorted list of class names.
+    """
+    classes = [
+        d for d in os.listdir(data_dir)
+        if os.path.isdir(os.path.join(data_dir, d))
+    ]
+    classes.sort()
+    return classes
