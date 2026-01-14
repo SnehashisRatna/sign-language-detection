@@ -9,6 +9,7 @@ dataset_videos/
 # Model files
 *.pth
 *.npz
+*.pyc
 
 # OS files
 .DS_Store
