@@ -8,27 +8,17 @@ import mediapipe as mp
 from collections import deque, Counter
 
 from models.gru_model import GRUClassifier
-from scripts.utils import extract_holistic_landmarks, FEAT_SIZE_HOLISTIC
+from scripts.utils import (
+    extract_holistic_landmarks,
+    FEAT_SIZE_HOLISTIC,
+    get_classes_from_data
+)
 
 # -------------------------
 # CONFIG
 # -------------------------
 MODEL_PATH = "gru_sanity_model.pth"
-
-# ⚠️ IMPORTANT: MUST MATCH TRAINING ORDER
-CLASSES = [
-    "AFTER", "ATTENTION", "BABY", "BEST", "BROTHER", "CHILD", "DAY",
-    "DAYAFTER", "DAYAFTERTOMORROW", "DEAF", "DEGREE", "DELAY",
-    "DO", "DONT", "DRINK", "family", "FATHER", "FOOD", "FRIEND",
-    "HELLO", "HUNGER", "HUSBAND", "LATER", "MAN", "MILK", "MORE",
-    "MOTHER", "NO", "NOW", "Numbers", "PLAY", "PLEASE", "PLENTY",
-    "REGRET", "RICE", "ROTI", "SEND", "SISTER", "SORRY", "THANKYOU",
-    "THERE", "THEY", "THIS", "THURSDAY", "TOMORROW", "WAIT",
-    "WAHTEVER", "WALK", "WAKE", "WASTE", "WATER", "WAY", "WE",
-    "WHAT", "WHERE", "WHICH", "WHILE", "WHO", "WHY", "WIDE",
-    "WIFE", "WOMAN", "YEAR", "YES", "YESTERDAY"
-]
-
+DATA_DIR = "data"        # 🔴 MUST be same dataset used for training
 
 SEQ_LEN = 30
 CONF_THRESH = 0.6
@@ -38,11 +28,20 @@ PRED_EVERY_N_FRAMES = 3   # reduce lag
 VOTE_WINDOW = 5           # stabilize output
 
 # -------------------------
+# LOAD CLASSES (AUTO)
+# -------------------------
+CLASSES = get_classes_from_data(DATA_DIR)
+
+print("✅ Classes loaded for inference:")
+print(CLASSES)
+print("Total classes:", len(CLASSES))
+
+# -------------------------
 # LOAD MODEL
 # -------------------------
 model = GRUClassifier(
     input_size=1662,
-    hidden_size=128,       # MUST MATCH TRAINING
+    hidden_size=128,           # MUST MATCH TRAINING
     num_classes=len(CLASSES)
 ).to(DEVICE)
 
