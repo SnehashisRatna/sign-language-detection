@@ -1,33 +1,25 @@
 # train.py
+
+import os
+import sys
+sys.path.append(os.path.abspath("."))   # 🔥 Fix for Windows import issue
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, random_split
 
 from dataset import SignLanguageDataset
 from models.gru_model import GRUClassifier
+from scripts.utils import get_classes_from_data
 
 
 # -------------------------
 # CONFIG
 # -------------------------
 DATA_DIR = "data"
+CLASSES = get_classes_from_data(DATA_DIR)   # 🔥 Auto-detect classes
 
-# ⚠️ MUST MATCH FOLDER NAMES + INFERENCE ORDER
-CLASSES = [
-    "AFTER", "ATTENTION", "BABY", "BEST", "BROTHER", "CHILD", "DAY",
-    "DAYAFTER", "DAYAFTERTOMORROW", "DEAF", "DEGREE", "DELAY",
-    "DO", "DONT", "DRINK", "family", "FATHER", "FOOD", "FRIEND",
-    "HELLO", "HUNGER", "HUSBAND", "LATER", "MAN", "MILK", "MORE",
-    "MOTHER", "NO", "NOW", "Numbers", "PLAY", "PLEASE", "PLENTY",
-    "REGRET", "RICE", "ROTI", "SEND", "SISTER", "SORRY", "THANKYOU",
-    "THERE", "THEY", "THIS", "THURSDAY", "TOMORROW", "WAIT",
-    "WAHTEVER", "WALK", "WAKE", "WASTE", "WATER", "WAY", "WE",
-    "WHAT", "WHERE", "WHICH", "WHILE", "WHO", "WHY", "WIDE",
-    "WIFE", "WOMAN", "YEAR", "YES", "YESTERDAY"
-]
-
-
-BATCH_SIZE = 16          # ⬅ increased (important after augmentation)
+BATCH_SIZE = 32
 EPOCHS = 50
 LR = 1e-3
 DEVICE = "cpu"
@@ -38,7 +30,6 @@ DEVICE = "cpu"
 # -------------------------
 full_dataset = SignLanguageDataset(DATA_DIR, CLASSES)
 
-# 80–20 split
 train_size = int(0.8 * len(full_dataset))
 val_size = len(full_dataset) - train_size
 
@@ -49,7 +40,7 @@ train_dataset, val_dataset = random_split(
 train_loader = DataLoader(
     train_dataset,
     batch_size=BATCH_SIZE,
-    shuffle=True          # ✅ VERY IMPORTANT
+    shuffle=True
 )
 
 val_loader = DataLoader(
@@ -58,9 +49,10 @@ val_loader = DataLoader(
     shuffle=False
 )
 
-print(f"📊 Dataset size: {len(full_dataset)}")
+print(f"\n📊 Total sequences: {len(full_dataset)}")
+print(f"📂 Number of classes: {len(CLASSES)}")
 print(f"   Train: {len(train_dataset)}")
-print(f"   Val  : {len(val_dataset)}")
+print(f"   Val  : {len(val_dataset)}\n")
 
 
 # -------------------------
@@ -77,9 +69,10 @@ optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
 
 # -------------------------
-# TRAIN
+# TRAIN LOOP
 # -------------------------
 for epoch in range(EPOCHS):
+
     model.train()
     train_loss = 0
     train_correct = 0
@@ -130,4 +123,4 @@ for epoch in range(EPOCHS):
 # SAVE MODEL
 # -------------------------
 torch.save(model.state_dict(), "gru_sanity_model.pth")
-print("✅ Model saved as gru_sanity_model.pth")
+print("\n✅ Model saved as gru_sanity_model.pth\n")

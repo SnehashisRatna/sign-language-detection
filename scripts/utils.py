@@ -1,25 +1,25 @@
-# scripts/utils.py
+# utils.py
+
 import os
 import numpy as np
 
 
-# Landmark counts (MediaPipe)
+# -------------------------
+# LANDMARK CONFIGURATION
+# -------------------------
 
 FACE_N = 468
 POSE_N = 33
 HAND_N = 21
 
-# Toggle modalities
 USE_FACE_DEFAULT = True
 USE_POSE_DEFAULT = True
 USE_HANDS_DEFAULT = True
 
-# Feature sizes
-FACE_FEAT = FACE_N * 3                  # 468 * (x,y,z)
-POSE_FEAT = POSE_N * 4                  # 33 * (x,y,z,visibility)
-HANDS_FEAT = HAND_N * 3 * 2             # left + right hand
+FACE_FEAT = FACE_N * 3
+POSE_FEAT = POSE_N * 4
+HANDS_FEAT = HAND_N * 3 * 2
 
-# Total = 1404 + 132 + 126 = 1662
 FEAT_SIZE_HOLISTIC = (
     (FACE_FEAT if USE_FACE_DEFAULT else 0) +
     (POSE_FEAT if USE_POSE_DEFAULT else 0) +
@@ -27,22 +27,21 @@ FEAT_SIZE_HOLISTIC = (
 )
 
 
+# -------------------------
+# FEATURE EXTRACTION
+# -------------------------
 
-# Feature Extraction
-
-def extract_holistic_landmarks(results,
-                               use_face=USE_FACE_DEFAULT,
-                               use_pose=USE_POSE_DEFAULT,
-                               use_hands=USE_HANDS_DEFAULT):
+def extract_holistic_landmarks(
+    results,
+    use_face=USE_FACE_DEFAULT,
+    use_pose=USE_POSE_DEFAULT,
+    use_hands=USE_HANDS_DEFAULT
+):
     """
     Convert MediaPipe Holistic results into a flattened feature vector.
-
-    Ordering:
-      [ face (468*3), pose (33*4), left hand (21*3), right hand (21*3) ]
-
-    Missing landmarks are zero-padded.
     Output shape: (1662,)
     """
+
     parts = []
 
     # FACE
@@ -53,7 +52,7 @@ def extract_holistic_landmarks(results,
         else:
             parts.extend([0.0] * FACE_FEAT)
 
-    # POSE 
+    # POSE
     if use_pose:
         if results.pose_landmarks:
             for lm in results.pose_landmarks.landmark:
@@ -61,8 +60,9 @@ def extract_holistic_landmarks(results,
         else:
             parts.extend([0.0] * POSE_FEAT)
 
-    #  HANDS 
+    # HANDS
     if use_hands:
+
         # Left hand
         if results.left_hand_landmarks:
             for lm in results.left_hand_landmarks.landmark:
@@ -80,55 +80,40 @@ def extract_holistic_landmarks(results,
     return np.array(parts, dtype=np.float32)
 
 
+# -------------------------
+# RELATIVE COORDINATE CONVERSION
+# -------------------------
 
-# Relative Coordinate Conversion
+def to_relative_holistic(frames):
+    """
+    Convert absolute coordinates to relative coordinates
+    using hip center as origin and shoulder width as scale.
+    """
 
-def to_relative_holistic(frames,
-                         use_face=USE_FACE_DEFAULT,
-                         use_pose=USE_POSE_DEFAULT,
-                         use_hands=USE_HANDS_DEFAULT):
-    """
-    Convert absolute coordinates to relative coordinates.
-    Uses hip center as origin and shoulder width as scale (if pose available).
-    """
     frames = frames.copy()
     T, F = frames.shape
 
-    offset = 0
-    face_offset = offset if use_face else None
-    if use_face:
-        offset += FACE_FEAT
-
-    pose_offset = offset if use_pose else None
-    if use_pose:
-        offset += POSE_FEAT
-
-    hands_offset = offset if use_hands else None
+    pose_offset = FACE_FEAT if USE_FACE_DEFAULT else 0
 
     for t in range(T):
-        row = frames[t].copy()
-        origin = None
-        scale = 1.0
+        row = frames[t]
 
-        if use_pose and pose_offset is not None:
-            pose = row[pose_offset:pose_offset + POSE_FEAT].reshape(-1, 4)
-            try:
-                left_hip = pose[23][:3]
-                right_hip = pose[24][:3]
-                origin = (left_hip + right_hip) / 2.0
-            except Exception:
-                origin = pose[0][:3]
+        pose = row[pose_offset:pose_offset + POSE_FEAT].reshape(-1, 4)
 
-            try:
-                left_sh = pose[11][:3]
-                right_sh = pose[12][:3]
-                scale = np.linalg.norm(left_sh - right_sh)
-                if scale < 1e-6:
-                    scale = 1.0
-            except Exception:
-                scale = 1.0
-        else:
+        try:
+            left_hip = pose[23][:3]
+            right_hip = pose[24][:3]
+            origin = (left_hip + right_hip) / 2.0
+        except:
             origin = np.zeros(3)
+
+        try:
+            left_sh = pose[11][:3]
+            right_sh = pose[12][:3]
+            scale = np.linalg.norm(left_sh - right_sh)
+            if scale < 1e-6:
+                scale = 1.0
+        except:
             scale = 1.0
 
         coords = row.reshape(-1, 3)
@@ -138,30 +123,32 @@ def to_relative_holistic(frames,
     return frames
 
 
-
-# Dataset Normalization
+# -------------------------
+# DATASET NORMALIZATION
+# -------------------------
 
 def normalize_dataset(X):
     """
     Zero-mean, unit-variance normalization.
     X shape: (N, T, F)
     """
+
     mean = X.mean(axis=(0, 1), keepdims=True)
     std = X.std(axis=(0, 1), keepdims=True) + 1e-8
     Xn = (X - mean) / std
     return Xn, mean, std
 
 
-
-# Save Sequence
+# -------------------------
+# SAVE SEQUENCE
+# -------------------------
 
 def save_sequence(save_dir, label, seq_idx, frames):
     """
-    Save sequence to:
+    Save sequence as:
       data/<LABEL>/<LABEL>_<idx>.npz
-
-    frames shape: (T, 1662)
     """
+
     label_dir = os.path.join(save_dir, label)
     os.makedirs(label_dir, exist_ok=True)
 
@@ -169,26 +156,20 @@ def save_sequence(save_dir, label, seq_idx, frames):
     np.savez_compressed(path, frames=frames, label=label)
     return path
 
-# ---------------------------------
-# Class Loader (AUTO-GENERATE CLASSES)
-# ---------------------------------
+
+# -------------------------
+# AUTO CLASS LOADER
+# -------------------------
 
 def get_classes_from_data(data_dir):
     """
-    Automatically read class names from dataset folder structure.
-
-    Example:
-        data/
-          ├── HELLO/
-          ├── THANKYOU/
-          ├── YES/
-
-    Returns:
-        Sorted list of class names.
+    Automatically detect class folders inside data directory.
     """
+
     classes = [
         d for d in os.listdir(data_dir)
         if os.path.isdir(os.path.join(data_dir, d))
     ]
+
     classes.sort()
     return classes
