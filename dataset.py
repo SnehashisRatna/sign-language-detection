@@ -104,7 +104,7 @@ def augment(seq):
 # ── Dataset ───────────────────────────────────────────────────────────────────
 
 class SignLanguageDataset(Dataset):
-    def __init__(self, data_dir, classes, augment_data=False, use_relative=False):
+    def __init__(self, data_dir, classes, augment_data=False, use_relative=True):
         """
         Args:
             data_dir:     path to data/ folder

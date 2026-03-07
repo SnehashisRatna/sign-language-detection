@@ -33,8 +33,9 @@ DEVICE          = "cuda" if torch.cuda.is_available() else "cpu"
 # DATASET  (train with augment ON, val with OFF)
 # ─────────────────────────────────────────────
 
+
 # Step 1: get split indices using a plain dataset
-_index_ds = SignLanguageDataset(DATA_DIR, CLASSES, augment_data=False, use_relative=False)
+_index_ds = SignLanguageDataset(DATA_DIR, CLASSES, augment_data=False, use_relative=True)
 train_size = int(0.8 * len(_index_ds))
 val_size   = len(_index_ds) - train_size
 
@@ -44,8 +45,8 @@ train_split, val_split = random_split(
 )
 
 # Step 2: re-wrap with correct augmentation flag for each split
-_aug_ds  = SignLanguageDataset(DATA_DIR, CLASSES, augment_data=True,  use_relative=False)
-_val_ds  = SignLanguageDataset(DATA_DIR, CLASSES, augment_data=False, use_relative=False)
+_aug_ds  = SignLanguageDataset(DATA_DIR, CLASSES, augment_data=True,  use_relative=True)
+_val_ds  = SignLanguageDataset(DATA_DIR, CLASSES, augment_data=False, use_relative=True)
 
 train_dataset = Subset(_aug_ds, train_split.indices)
 val_dataset   = Subset(_val_ds, val_split.indices)

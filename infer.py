@@ -16,6 +16,7 @@ from PIL import ImageFont, ImageDraw, Image
 from models.gru_model import GRUClassifier
 from scripts.utils import (
     extract_holistic_landmarks,
+    to_relative_holistic,
     FEAT_SIZE_HOLISTIC,
     get_classes_from_data,
 )
@@ -40,13 +41,11 @@ FONT_PATH       = "assets/NotoSansOriya-Regular.ttf"
 SEQ_LEN         = 30
 DEVICE          = "cpu"
 
-PRED_EVERY_N    = 2
-SMOOTH_WINDOW   = 6
-CONF_THRESH     = 0.50
-DEBOUNCE_FRAMES = 6
-
-ENGLISH_FONT_SIZE = 52
-ODIA_FONT_SIZE    = 52
+PRED_EVERY_N    = 2      # run model every N frames
+SMOOTH_WINDOW   = 6      # average softmax probs over last N predictions
+CONF_THRESH     = 0.50   # minimum confidence to display prediction
+DEBOUNCE_FRAMES = 6      # min frames between terminal prints
+ODIA_FONT_SIZE  = 52
 
 
 # ─────────────────────────────────────────────
@@ -57,6 +56,7 @@ try:
     print(f"✅ Odia font loaded")
 except Exception as e:
     print(f"❌ Font error: {e}")
+    print(f"   Make sure {FONT_PATH} exists")
     odia_font = None
 
 
@@ -77,7 +77,7 @@ model = GRUClassifier(
     input_size=1662,
     hidden_size=256,
     num_classes=len(CLASSES),
-    dropout=0.0,
+    dropout=0.0,   # always 0 at inference
 ).to(DEVICE)
 
 model.load_state_dict(state_dict)
@@ -87,13 +87,15 @@ print("✅ Model loaded successfully\n")
 
 # ─────────────────────────────────────────────
 # ODIA TEXT RENDERER
+# Uses Pillow because OpenCV doesn't support Unicode
 # ─────────────────────────────────────────────
-def put_odia_text(frame, text, position, font_size=ODIA_FONT_SIZE, color=(255, 255, 255)):
+def put_odia_text(frame, text, position, color=(0, 255, 255)):
+    """Render Odia unicode text onto OpenCV frame using Pillow."""
     if odia_font is None or not text:
         return frame
     img_pil   = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
     draw      = ImageDraw.Draw(img_pil)
-    rgb_color = (color[2], color[1], color[0])
+    rgb_color = (color[2], color[1], color[0])   # BGR → RGB
     draw.text(position, text, font=odia_font, fill=rgb_color)
     return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
 
@@ -102,24 +104,34 @@ def put_odia_text(frame, text, position, font_size=ODIA_FONT_SIZE, color=(255, 2
 # DRAW LANDMARKS
 # ─────────────────────────────────────────────
 def draw_landmarks(frame, results):
+    """Draw face mesh, pose, and hand landmarks on frame."""
+
+    # Face mesh
     mp_drawing.draw_landmarks(
-        frame, results.face_landmarks,
+        frame,
+        results.face_landmarks,
         mp_holistic.FACEMESH_CONTOURS,
         landmark_drawing_spec=None,
         connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_contours_style()
     )
+    # Pose
     mp_drawing.draw_landmarks(
-        frame, results.pose_landmarks,
+        frame,
+        results.pose_landmarks,
         mp_holistic.POSE_CONNECTIONS,
         mp_drawing_styles.get_default_pose_landmarks_style()
     )
+    # Left hand
     mp_drawing.draw_landmarks(
-        frame, results.left_hand_landmarks,
+        frame,
+        results.left_hand_landmarks,
         mp_holistic.HAND_CONNECTIONS,
         mp_drawing_styles.get_default_hand_landmarks_style()
     )
+    # Right hand
     mp_drawing.draw_landmarks(
-        frame, results.right_hand_landmarks,
+        frame,
+        results.right_hand_landmarks,
         mp_holistic.HAND_CONNECTIONS,
         mp_drawing_styles.get_default_hand_landmarks_style()
     )
@@ -130,12 +142,23 @@ def draw_landmarks(frame, results):
 # ─────────────────────────────────────────────
 @torch.no_grad()
 def predict(frame_buffer, prob_buffer):
-    seq   = np.array(frame_buffer, dtype=np.float32)
-    x     = torch.tensor(seq).unsqueeze(0).to(DEVICE)
+    """
+    Run model on current frame buffer.
+    Applies relative coordinate normalization (must match training).
+    Uses probability averaging for smooth, stable predictions.
+
+    Returns: (label or None, confidence float)
+    """
+    seq = np.array(frame_buffer, dtype=np.float32)   # (30, 1662)
+    seq = to_relative_holistic(seq)                   # normalize — matches training
+
+    x     = torch.tensor(seq).unsqueeze(0).to(DEVICE) # (1, 30, 1662)
     probs = torch.softmax(model(x), dim=1).cpu().numpy()[0]
 
+    # Average over last SMOOTH_WINDOW predictions for stability
     prob_buffer.append(probs)
     avg_probs  = np.mean(prob_buffer, axis=0)
+
     pred_idx   = int(np.argmax(avg_probs))
     confidence = float(avg_probs[pred_idx])
 
@@ -147,43 +170,44 @@ def predict(frame_buffer, prob_buffer):
 # ─────────────────────────────────────────────
 # HUD DRAWING
 # Layout:
-#   TOP    — English word (large, white)
-#   BOTTOM — Odia word (large, cyan)
+#   TOP    — English word + confidence (large, green)
+#   BOTTOM — Odia translation (large, cyan)
+#   Bars   — confidence bar + buffer fill bar
 # ─────────────────────────────────────────────
 def draw_hud(frame, prediction, confidence, buf_len):
     h, w = frame.shape[:2]
 
-    # ── TOP: English word ─────────────────────
+    # ── TOP: English prediction ───────────────
     cv2.rectangle(frame, (0, 0), (w, 70), (0, 0, 0), -1)
     if prediction:
-        english_text = f"{prediction}  ({confidence*100:.1f}%)"
-        cv2.putText(frame, english_text, (10, 52),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 255, 80), 3)
+        cv2.putText(
+            frame,
+            f"{prediction}  ({confidence*100:.1f}%)",
+            (10, 52),
+            cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 255, 80), 3
+        )
     else:
-        cv2.putText(frame, "...", (10, 52),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.4, (150, 150, 150), 2)
-
-    # ── BOTTOM: Odia word ─────────────────────
-    cv2.rectangle(frame, (0, h - 100), (w, h), (0, 0, 0), -1)
-
-    if prediction:
-        odia_text = get_odia(prediction)
-        frame = put_odia_text(
-            frame, odia_text,
-            (10, h - 90),
-            color=(0, 255, 255)   # cyan
+        cv2.putText(
+            frame, "...", (10, 52),
+            cv2.FONT_HERSHEY_SIMPLEX, 1.4, (150, 150, 150), 2
         )
 
-    # ── Confidence bar (green/red) ────────────
+    # ── BOTTOM: Odia translation ──────────────
+    cv2.rectangle(frame, (0, h - 100), (w, h), (0, 0, 0), -1)
+    if prediction:
+        odia_text = get_odia(prediction)
+        frame = put_odia_text(frame, odia_text, (10, h - 90), color=(0, 255, 255))
+
+    # ── Confidence bar (green = above thresh, red = below) ──
     conf_w    = int(confidence * (w - 20))
     bar_color = (0, 200, 0) if confidence >= CONF_THRESH else (0, 0, 200)
-    cv2.rectangle(frame, (10, h - 20), (10 + conf_w, h - 12), bar_color, -1)
-    cv2.rectangle(frame, (10, h - 20), (w - 10,      h - 12), (80, 80, 80), 1)
+    cv2.rectangle(frame, (10, h - 25), (10 + conf_w, h - 17), bar_color, -1)
+    cv2.rectangle(frame, (10, h - 25), (w - 10,      h - 17), (80, 80, 80), 1)
 
-    # ── Buffer fill bar (orange) ──────────────
+    # ── Buffer fill bar (orange) — shows how full the 30-frame buffer is ──
     fill_w = int((buf_len / SEQ_LEN) * (w - 20))
-    cv2.rectangle(frame, (10, h - 8), (10 + fill_w, h - 2), (255, 160, 0), -1)
-    cv2.rectangle(frame, (10, h - 8), (w - 10,      h - 2), (80, 80, 80), 1)
+    cv2.rectangle(frame, (10, h - 10), (10 + fill_w, h - 3), (255, 160, 0), -1)
+    cv2.rectangle(frame, (10, h - 10), (w - 10,      h - 3), (80, 80, 80), 1)
 
     return frame
 
@@ -208,11 +232,12 @@ def realtime_inference():
     last_pred    = None
     confidence   = 0.0
 
-    print("📷 Camera running  —  press 'q' to quit\n")
+    print("📷 Camera running")
+    print("   Press 'q' to quit\n")
 
     with mp_holistic.Holistic(
         static_image_mode=False,
-        model_complexity=0,
+        model_complexity=0,              # 0 = fastest
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5,
     ) as holistic:
@@ -223,30 +248,33 @@ def realtime_inference():
                 break
 
             frame_count += 1
-            frame = cv2.flip(frame, 1)
+            frame = cv2.flip(frame, 1)   # mirror — natural webcam view
 
-            # ── MediaPipe ─────────────────────
+            # ── MediaPipe detection ───────────
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             rgb.flags.writeable = False
             results = holistic.process(rgb)
             rgb.flags.writeable = True
             frame = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
-            # ── Draw landmarks ────────────────
+            # ── Draw landmarks on frame ───────
             draw_landmarks(frame, results)
 
-            # ── Extract keypoints ─────────────
+            # ── Extract 1662-dim keypoints ────
             landmarks = extract_holistic_landmarks(results)
             if landmarks.shape[0] == FEAT_SIZE_HOLISTIC:
                 frame_buffer.append(landmarks)
 
-            # ── Only predict when hand visible ─
+            # ── Gate: only predict when hands visible ──
             hands_detected = (
-                results.left_hand_landmarks is not None or
+                results.left_hand_landmarks  is not None or
                 results.right_hand_landmarks is not None
             )
 
-            if len(frame_buffer) == SEQ_LEN and frame_count % PRED_EVERY_N == 0 and hands_detected:
+            if len(frame_buffer) == SEQ_LEN and \
+               frame_count % PRED_EVERY_N == 0 and \
+               hands_detected:
+
                 last_pred, confidence = predict(frame_buffer, prob_buffer)
 
                 debounce += 1
@@ -256,6 +284,7 @@ def realtime_inference():
                     debounce = 0
 
             elif not hands_detected:
+                # Clear everything when hands leave frame
                 last_pred  = None
                 confidence = 0.0
                 prob_buffer.clear()
