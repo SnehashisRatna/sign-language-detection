@@ -1,16 +1,41 @@
 # Virtual environment
 venv/
+.env/
+
+# Python cache
 __pycache__/
-
-# Data folders
-data/
-dataset_videos/
-
-# Model files
-*.pth
-*.npz
 *.pyc
+*.pyo
+
+# Dataset folders
+data/
+dataset/
+dataset_videos/
+my_videos/
+
+# Video files
+*.MOV
+*.mp4
+*.avi
+*.mkv
+
+# Extracted keypoints
+*.npy
+*.npz
+
+# Model weights
+*.pth
+*.pt
+*.h5
+
+# Logs
+logs/
+*.log
 
 # OS files
 .DS_Store
 Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
