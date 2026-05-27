@@ -3,6 +3,12 @@ scripts/extract_from_videos.py — Optimized Video Landmark Extractor
 
 Key feature: Auto-clips videos between CLIP_START and CLIP_END seconds
 so only the middle section (actual sign) is used for extraction.
+
+Fixes applied:
+  [1] start_idx overwrite bug fixed — now uses run_id (timestamp-based)
+  [2] --no_flip flag added — for side/angle view videos
+  [3] MIN_HAND_RATIO raised to 0.5 — cleaner sequences for weak classes
+  [4] Re-run protection — skips already-processed videos
 """
 
 import os
@@ -24,9 +30,9 @@ from scripts.utils import extract_holistic_landmarks, save_sequence, FEAT_SIZE_H
 # ─────────────────────────────────────────────
 TARGET_SIZE      = (640, 480)   # resize all frames to this
 SEQ_LEN          = 30           # frames per sequence
-SLIDE_STEP       = 2            # sliding window step
-MAX_SEQS_PER_VID = 5            # max sequences per video
-MIN_HAND_RATIO   = 0.3          # min ratio of frames with hand detected
+SLIDE_STEP       = 5            # sliding window step
+MAX_SEQS_PER_VID = 10            # max sequences per video
+MIN_HAND_RATIO   = 0.5          # FIX [3]: raised from 0.3 → 0.5 for cleaner sequences
 CLIP_START_SEC   = 3.0          # skip first N seconds of video
 CLIP_END_SEC     = 7.0          # stop at this second of video
 SUPPORTED_EXTS   = [".mp4", ".avi", ".mov", ".MOV", ".mkv", ".webm", ".MP4", ".AVI"]
@@ -89,10 +95,15 @@ def temporal_augmentation(frames, hand_mask, seq_len=SEQ_LEN,
 
 def process_video(video_path, holistic,
                   clip_start=CLIP_START_SEC,
-                  clip_end=CLIP_END_SEC):
+                  clip_end=CLIP_END_SEC,
+                  flip=True):                   # FIX [2]: flip flag added
     """
     Extract landmark frames from CLIP_START to CLIP_END seconds only.
     Skips the entry/exit portions of the video automatically.
+
+    Args:
+        flip: True  → mirror horizontally (front-view / webcam-style videos)
+              False → no flip (side-angle / diagonal videos)
 
     Returns: (frames, hand_mask) or (None, None)
     """
@@ -102,7 +113,6 @@ def process_video(video_path, holistic,
 
     fps          = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration     = total_frames / fps if fps > 0 else 0
 
     if fps <= 0:
         cap.release()
@@ -133,7 +143,11 @@ def process_video(video_path, holistic,
             break
 
         frame = resize_frame(frame)
-        frame = cv2.flip(frame, 1)   # mirror — matches webcam collection
+
+        # FIX [2]: Only flip for front-view videos (matches webcam collection)
+        #          Skip flip for angle/side videos to preserve correct geometry
+        if flip:
+            frame = cv2.flip(frame, 1)
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         rgb.flags.writeable = False
@@ -168,7 +182,7 @@ def process_video(video_path, holistic,
 # ─────────────────────────────────────────────
 
 def main(dataset_dir, save_dir, clip_start, clip_end,
-         min_det=0.5, min_track=0.5, model_complexity=1):
+         flip=True, min_det=0.5, min_track=0.5, model_complexity=1):
 
     mp_holistic = mp.solutions.holistic
     os.makedirs(save_dir, exist_ok=True)
@@ -182,6 +196,9 @@ def main(dataset_dir, save_dir, clip_start, clip_end,
         print(f"❌ No label folders found in '{dataset_dir}'")
         return
 
+    # FIX [1]: Unique run ID per execution — prevents filename collisions on re-runs
+    run_id = int(time.time())
+
     print(f"\n{'─'*55}")
     print(f"  Dataset dir  : {dataset_dir}")
     print(f"  Save dir     : {save_dir}")
@@ -189,6 +206,8 @@ def main(dataset_dir, save_dir, clip_start, clip_end,
     print(f"  Clip window  : {clip_start}s → {clip_end}s")
     print(f"  Seq length   : {SEQ_LEN} frames")
     print(f"  Max seqs/vid : {MAX_SEQS_PER_VID}")
+    print(f"  Flip frames  : {'YES (front-view mode)' if flip else 'NO (angle-view mode)'}")
+    print(f"  Run ID       : {run_id}")
     print(f"{'─'*55}\n")
 
     total_seqs = 0
@@ -226,18 +245,36 @@ def main(dataset_dir, save_dir, clip_start, clip_end,
             print(f"📂 [{label_upper}] {len(video_files)} video(s)")
 
             label_seqs = 0
-            start_idx  = len(os.listdir(label_save_dir))
+
+            # FIX [4]: Build set of already-processed video basenames
+            existing_files  = set(os.listdir(label_save_dir))
+            processed_names = set()
+            for f in existing_files:
+                # filenames are like: {run_id}_{vid_idx}_{seq_i}.npz
+                # track by stem to detect previously processed videos
+                parts = f.replace(".npz", "").split("_")
+                if len(parts) >= 2:
+                    processed_names.add(parts[1])  # vid_idx portion
 
             for vid_idx, fpath in enumerate(video_files):
-                fname = os.path.basename(fpath)
+                fname      = os.path.basename(fpath)
+                fname_stem = os.path.splitext(fname)[0]
+
                 print(f"   [{vid_idx+1}/{len(video_files)}] {fname} ...",
                       end=" ", flush=True)
+
+                # FIX [4]: Skip if this video was already processed in a prior run
+                if fname_stem in existing_files or \
+                   any(fname_stem in f for f in existing_files):
+                    print("⏩ SKIP — already processed")
+                    continue
 
                 try:
                     frames, hand_mask = process_video(
                         fpath, holistic,
                         clip_start=clip_start,
-                        clip_end=clip_end
+                        clip_end=clip_end,
+                        flip=flip              # FIX [2]: pass flip flag through
                     )
 
                     if frames is None:
@@ -252,11 +289,13 @@ def main(dataset_dir, save_dir, clip_start, clip_end,
                         skipped += 1
                         continue
 
+                    # FIX [1]: Use run_id + fname_stem instead of start_idx
+                    #           Guarantees unique filenames across re-runs
                     for seq_i, seq in enumerate(sequences):
                         save_sequence(
                             save_dir,
                             label_upper,
-                            f"{start_idx}_{vid_idx}_{seq_i}",
+                            f"{run_id}_{fname_stem}_{seq_i}",
                             seq
                         )
                         label_seqs += 1
@@ -313,6 +352,11 @@ if __name__ == "__main__":
         "--clip_end", type=float, default=7.0,
         help="Stop extracting at this second (default: 7.0)"
     )
+    # FIX [2]: --no_flip flag for side/angle/diagonal view videos
+    parser.add_argument(
+        "--no_flip", action="store_true",
+        help="Disable horizontal flip — use this for side/angle view videos"
+    )
     parser.add_argument(
         "--min_det", type=float, default=0.5,
         help="MediaPipe min detection confidence (default: 0.5)"
@@ -332,6 +376,7 @@ if __name__ == "__main__":
         save_dir         = args.save_dir,
         clip_start       = args.clip_start,
         clip_end         = args.clip_end,
+        flip             = not args.no_flip,   # FIX [2]: invert the flag
         min_det          = args.min_det,
         min_track        = args.min_track,
         model_complexity = args.model_complexity,

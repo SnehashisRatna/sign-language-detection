@@ -116,7 +116,7 @@ HEALTH_PEOPLE = {
 # ── ⚡ Speed & Value ──────────────────────────────────────────
 SPEED_VALUE = {
     "CHEAP"     : "ଶସ୍ତା",
-    "EXPENSIVE" : "ମହଙ୍ଗା",
+    "EXPENSIVE" : "ମହଙ୍ଗା", 
     "FAST"      : "ଦ୍ରୁତ",
     "SLOW"      : "ଧୀର",
 }

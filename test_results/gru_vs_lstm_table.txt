@@ -3,10 +3,10 @@ GRU vs LSTM — COMPARISON TABLE
 
 Metric                        GRU (Proposed)    LSTM (Baseline)
 -----------------------------------------------------------------
-Test Accuracy                        90.07 % 67.55 %
-Macro F1-Score                       90.31 % 65.22 %
-ROC-AUC (macro)                      99.88 %             99.04%
+Test Accuracy                        88.41 % 37.26 %
+Macro F1-Score                       88.76 % 36.08 %
+ROC-AUC (macro)                       99.7 %             80.32%
 Parameters                           1258956            1522124
-Avg Latency (ms)                         1.0 0.81
-Throughput (FPS)                       998.7 1233.2
+Avg Latency (ms)                        1.04 0.69
+Throughput (FPS)                       958.8 1439.0
 =================================================================
