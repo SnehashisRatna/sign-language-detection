@@ -1,0 +1,17 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# requirements_multilingual.txt
+# Run:  pip install -r requirements_multilingual.txt
+#
+# These are ADDITIONS to your existing environment.
+# Your existing packages (torch, mediapipe, opencv, Pillow, numpy)
+# are already installed — do NOT re-install them.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Google Translation API (free, no key needed)
+googletrans==4.0.0-rc1
+
+# Text-to-Speech
+gTTS>=2.3.1
+
+# Audio playback
+pygame>=2.5.0
